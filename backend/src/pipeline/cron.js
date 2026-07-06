@@ -26,7 +26,10 @@ function startCron() {
     }
   );
 
-  console.log('Cron scheduled. Next run:', task.nextRun()?.toISOString());
+  console.log('Cron scheduled. Next runs:');
+  for (const [name, t] of cron.getTasks().entries()) {
+    console.log(`  - ${name}`);
+  }
 }
 
 function stopCron() {
