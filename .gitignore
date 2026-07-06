@@ -1,0 +1,12 @@
+node_modules/
+.next/
+data/
+.env
+dist/
+*.log
+
+# Agent system scratch (not part of the project)
+.opencode/
+AGENTS.md
+WORKFLOW_STATE.md
+Scripts/

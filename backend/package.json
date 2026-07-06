@@ -1,0 +1,20 @@
+{
+  "name": "veille-rss-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "helmet": "^8.2.0",
+    "node-cron": "^3.0.3",
+    "p-limit": "^3.1.0",
+    "rss-parser": "^3.13.0"
+  }
+}

@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground: 248 248 248;
+  --background: 17 17 17;
+  --card: 30 30 30;
+  --card-border: 50 50 50;
+  --muted: 156 156 156;
+  --accent: 245 158 11;
+}
+
+body {
+  color: rgb(var(--foreground));
+  background: rgb(var(--background));
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}

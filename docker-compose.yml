@@ -1,0 +1,70 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: veille-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  pipeline-init:
+    image: ollama/ollama:latest
+    container_name: veille-pipeline-init
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ollama-data:/root/.ollama
+      - ./backend/scripts/pull-ollama-model.sh:/pull-ollama-model.sh
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    entrypoint: ["/bin/sh", "/pull-ollama-model.sh"]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: veille-backend
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - TZ=Europe/Paris
+      - DATABASE_PATH=/app/data/veille.sqlite
+      - APP_PASSWORD=${APP_PASSWORD:?APP_PASSWORD is required}
+      - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET is required}
+    depends_on:
+      ollama:
+        condition: service_healthy
+      pipeline-init:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: veille-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - backend
+
+volumes:
+  ollama-data:
