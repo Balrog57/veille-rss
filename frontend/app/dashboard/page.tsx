@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { checkAuth, logout, getEditions, getEdition, triggerRunTick } from '@/lib/api';
-import type { Edition } from '@/lib/types';
+import type { Edition, Article } from '@/lib/types';
 import EditionSelector from './components/EditionSelector';
 import DraggableGrid from './components/DraggableGrid';
 
@@ -12,7 +12,7 @@ export default function DashboardPage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [editions, setEditions] = useState<Edition[]>([]);
   const [selectedEditionId, setSelectedEditionId] = useState<number | null>(null);
-  const [articles, setArticles] = useState([]);
+  const [articles, setArticles] = useState<Article[]>([]);
   const [loadingEditions, setLoadingEditions] = useState(true);
   const [loadingArticles, setLoadingArticles] = useState(false);
   const [ticking, setTicking] = useState(false);
