@@ -65,6 +65,11 @@ services:
       - NODE_ENV=production
     depends_on:
       - backend
+    labels:
+      io.casaos.app.icon: http://192.168.1.98:3000/veille-rss.png
+      io.casaos.app.title: "Veille RSS"
+      io.casaos.app.description: "Tableau de bord de veille IA multi-sources"
+      io.casaos.app.port: "3000"
 
 volumes:
   ollama-data:
