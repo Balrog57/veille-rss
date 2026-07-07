@@ -9,6 +9,7 @@ const { seedDefaultFeed } = require('./services/seed');
 const { waitForModel } = require('./services/ollama');
 const { startCron } = require('./pipeline/cron');
 const { runTick } = require('./pipeline/run');
+const { floorTo6hBucket } = require('./services/bucket');
 
 const app = express();
 
@@ -28,12 +29,33 @@ app.use('/api/editions', require('./routes/editions'));
 app.use('/api/articles', require('./routes/articles'));
 
 // POST /api/admin/run-tick — manual tick trigger (auth required)
+// Idempotent: skips if an edition already exists for the current 6h bucket.
 app.post('/api/admin/run-tick', requireAuth, async (req, res) => {
   try {
     const result = await runTick();
     res.json(result);
   } catch (err) {
     console.error('[Tick] Pipeline error:', err.message);
+    res.status(500).json({ error: 'Pipeline tick failed' });
+  }
+});
+
+// POST /api/admin/force-tick — force a fresh tick for the current 6h bucket.
+// Deletes the existing edition for the current bucket (if any) and re-runs.
+app.post('/api/admin/force-tick', requireAuth, async (req, res) => {
+  try {
+    const db = getDb();
+    const bucket = floorTo6hBucket(new Date());
+    const existing = db.prepare('SELECT id FROM editions WHERE bucket = ?').get(bucket);
+    if (existing) {
+      db.prepare('DELETE FROM articles WHERE edition_id = ?').run(existing.id);
+      db.prepare('DELETE FROM editions WHERE id = ?').run(existing.id);
+      console.log(`[ForceTick] Deleted existing edition ${existing.id} for bucket ${bucket}`);
+    }
+    const result = await runTick();
+    res.json(result);
+  } catch (err) {
+    console.error('[ForceTick] Pipeline error:', err.message);
     res.status(500).json({ error: 'Pipeline tick failed' });
   }
 });
