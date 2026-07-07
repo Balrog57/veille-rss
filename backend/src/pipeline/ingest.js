@@ -10,23 +10,44 @@ const parser = new Parser({
     'User-Agent': 'VeilleRSS/1.0 (+https://github.com/noveltrad/veille-rss)',
     'Accept': 'application/rss+xml, application/xml, text/xml, */*',
   },
+  customFields: {
+    item: [
+      ['media:content', 'media:content', { keepArray: true }],
+      ['media:thumbnail', 'media:thumbnail', { keepArray: true }],
+      ['itunes:image', 'itunes:image'],
+    ],
+  },
 });
 
 /**
  * Extract the best available image URL from an RSS item.
+ * Checks: enclosure, media:thumbnail, media:content, itunes:image,
+ * and finally <img src="..."> inside the HTML description.
  */
 function extractImage(item) {
   // enclosure type="image/*"
   if (item.enclosure && item.enclosure.type && item.enclosure.type.startsWith('image/')) {
     return item.enclosure.url;
   }
-
-  // media:thumbnail or media:content
-  if (item['media:thumbnail'] && item['media:thumbnail']['$'] && item['media:thumbnail']['$'].url) {
-    return item['media:thumbnail']['$'].url;
+  if (item.enclosure && item.enclosure.url && !item.enclosure.type) {
+    // enclosure with no type but a URL that looks like an image
+    if (/\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(item.enclosure.url)) {
+      return item.enclosure.url;
+    }
   }
-  if (item['media:content'] && item['media:content']['$'] && item['media:content']['$'].url) {
-    return item['media:content']['$'].url;
+
+  // media:thumbnail (can be array or single object)
+  const thumbs = toArray(item['media:thumbnail']);
+  for (const t of thumbs) {
+    if (t && t.$ && t.$.url) return t.$.url;
+    if (t && t.url) return t.url;
+  }
+
+  // media:content (can be array or single object)
+  const contents = toArray(item['media:content']);
+  for (const c of contents) {
+    if (c && c.$ && c.$.url) return c.$.url;
+    if (c && c.url) return c.url;
   }
 
   // itunes:image
@@ -34,7 +55,21 @@ function extractImage(item) {
     return item['itunes:image']['$'].href;
   }
 
+  // <img src="..."> inside the HTML content/description (before stripping)
+  const html = item.content || item['content:encoded'] || item.description || '';
+  if (html) {
+    const imgMatch = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+    if (imgMatch && imgMatch[1]) {
+      return imgMatch[1];
+    }
+  }
+
   return null;
+}
+
+function toArray(v) {
+  if (!v) return [];
+  return Array.isArray(v) ? v : [v];
 }
 
 /**
