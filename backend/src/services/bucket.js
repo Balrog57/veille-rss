@@ -1,15 +1,14 @@
 /**
- * Floor a date to the nearest 6h bucket in Europe/Paris timezone.
- * Buckets: 00:00, 06:00, 12:00, 18:00 Paris time.
+ * Floor a date to the nearest 6h bucket in the configured timezone.
+ * Buckets: 00:00, 06:00, 12:00, 18:00 (any timezone, configurable).
  * Returns an ISO string of the bucket start, expressed as the true UTC
- * Instant that corresponds to that Paris wall-clock (so formatting it with
- * timeZone: 'Europe/Paris' yields back the expected HH:00).
- *
- * For example, 18:00 Paris in summer (CEST, UTC+2) -> "2026-07-06T16:00:00.000Z".
+ * Instant that corresponds to that wall-clock (so formatting it with
+ * the same timeZone yields back the expected HH:00).
  */
-function floorTo6hBucket(date) {
-  const parts = new Intl.DateTimeFormat('fr-FR', {
-    timeZone: 'Europe/Paris',
+function floorTo6hBucket(date, timeZone) {
+  const tz = timeZone || require('./settings').get().timezone || 'Europe/Paris';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -30,15 +29,13 @@ function floorTo6hBucket(date) {
   const hour = get('hour') === 24 ? 0 : get('hour');  // Intl can return "24" at midnight
   const bucketHour = Math.floor(hour / 6) * 6;
 
-  // Build a provisional Date using the Paris wall-clock components as if
-  // they were UTC. The true UTC Instant is provisional minus the Paris
-  // offset (e.g. -2h during CEST, -1h during CET).
+  // Provisional date built from the wall-clock components as if UTC.
   const provisional = new Date(Date.UTC(year, month - 1, day, bucketHour, 0, 0, 0));
 
-  // Get the Paris UTC offset (e.g. "+02:00" or "+01:00") at the bucket
+  // Get the timezone UTC offset (e.g. "+02:00" or "+01:00") for the bucket
   // wall-clock, via Intl longOffset. Falls back to "+01:00" if parsing fails.
   const offsetStr = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Europe/Paris',
+    timeZone: tz,
     timeZoneName: 'longOffset',
   }).formatToParts(provisional).find((p) => p.type === 'timeZoneName')?.value || 'GMT+01:00';
   const m = offsetStr.match(/([+-])(\d{2}):(\d{2})/);

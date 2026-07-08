@@ -1,5 +1,6 @@
 const { getDb } = require('../db');
 const { floorTo6hBucket } = require('../services/bucket');
+const settings = require('../services/settings');
 const { ingestAllFeeds } = require('./ingest');
 const { dedupArticles } = require('./dedup');
 const { summarizeAll } = require('./summarize');
@@ -20,8 +21,9 @@ async function runTick() {
   running = true;
   try {
     const db = getDb();
-    const bucket = floorTo6hBucket(new Date());
-    console.log(`[Run] Starting tick for bucket: ${bucket}`);
+    const s = settings.get();
+    const bucket = floorTo6hBucket(new Date(), s.timezone);
+    console.log(`[Run] Starting tick for bucket: ${bucket} (tz=${s.timezone})`);
 
     // Check if edition already exists for this bucket
     const existing = db.prepare('SELECT id FROM editions WHERE bucket = ?').get(bucket);
@@ -37,30 +39,51 @@ async function runTick() {
       console.log('[Run] No articles ingested, creating empty edition.');
       const info = db.prepare('INSERT INTO editions (bucket, title) VALUES (?, ?)').run(
         bucket,
-        `Édition ${new Date(bucket).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' })}`
+        formatEditionTitle(bucket, s.timezone)
       );
       return { editionId: info.lastInsertRowid, articleCount: 0 };
     }
 
-    // Step 2: Dedup
-    console.log('[Run] Step 2: Dedup');
-    const deduped = await dedupArticles(rawArticles);
-    if (deduped.length === 0) {
-      console.log('[Run] No articles after dedup, creating empty edition.');
-      const info = db.prepare('INSERT INTO editions (bucket, title) VALUES (?, ?)').run(bucket, `Édition ${bucket}`);
+    // Step 2: Filter by max article age (in hours)
+    const maxAgeHours = s.maxArticleAgeHours;
+    const cutoffMs = Date.now() - maxAgeHours * 60 * 60 * 1000;
+    const freshArticles = rawArticles.filter((a) => {
+      const t = Date.parse(a.pubDate);
+      if (Number.isNaN(t)) return true; // keep if unparseable
+      return t >= cutoffMs;
+    });
+    const filtered = rawArticles.length - freshArticles.length;
+    if (filtered > 0) {
+      console.log(`[Run] Filtered ${filtered} articles older than ${maxAgeHours}h`);
+    }
+    if (freshArticles.length === 0) {
+      console.log('[Run] No fresh articles, creating empty edition.');
+      const info = db.prepare('INSERT INTO editions (bucket, title) VALUES (?, ?)').run(
+        bucket,
+        formatEditionTitle(bucket, s.timezone)
+      );
       return { editionId: info.lastInsertRowid, articleCount: 0 };
     }
 
-    // Step 3: Summarize
-    console.log('[Run] Step 3: Summarize');
+    // Step 3: Dedup
+    console.log('[Run] Step 3: Dedup');
+    const deduped = await dedupArticles(freshArticles);
+    if (deduped.length === 0) {
+      console.log('[Run] No articles after dedup, creating empty edition.');
+      const info = db.prepare('INSERT INTO editions (bucket, title) VALUES (?, ?)').run(
+        bucket,
+        formatEditionTitle(bucket, s.timezone)
+      );
+      return { editionId: info.lastInsertRowid, articleCount: 0 };
+    }
+
+    // Step 4: Summarize
+    console.log('[Run] Step 4: Summarize');
     const summarized = await summarizeAll(deduped);
 
-    // Step 4: Persist
-    console.log('[Run] Step 4: Persist');
-    const editionTitle = `Édition du ${new Date(bucket).toLocaleDateString('fr-FR', {
-      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-      hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris',
-    })}`;
+    // Step 5: Persist
+    console.log('[Run] Step 5: Persist');
+    const editionTitle = formatEditionTitle(bucket, s.timezone);
 
     const transaction = db.transaction(() => {
       const editionInfo = db.prepare('INSERT INTO editions (bucket, title) VALUES (?, ?)').run(bucket, editionTitle);
@@ -101,6 +124,18 @@ async function runTick() {
   } finally {
     running = false;
   }
+}
+
+function formatEditionTitle(bucket, tz) {
+  return `Édition du ${new Date(bucket).toLocaleDateString('fr-FR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: tz,
+  })}`;
 }
 
 module.exports = { runTick };

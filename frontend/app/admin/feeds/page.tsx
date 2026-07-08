@@ -77,6 +77,9 @@ export default function AdminFeedsPage() {
               <a href="/admin/feeds" className="text-sm text-gray-300 hover:text-amber-400 transition-colors">
                 Gestion des flux
               </a>
+              <a href="/admin/settings" className="text-sm text-gray-400 hover:text-amber-400 transition-colors">
+                Paramètres
+              </a>
             </nav>
           </div>
           <button onClick={handleLogout} className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">

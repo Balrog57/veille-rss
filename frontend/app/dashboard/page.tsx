@@ -108,6 +108,12 @@ export default function DashboardPage() {
               >
                 Gestion des flux
               </a>
+              <a
+                href="/admin/settings"
+                className="text-sm text-gray-400 hover:text-amber-400 transition-colors"
+              >
+                Paramètres
+              </a>
             </nav>
           </div>
 
@@ -163,7 +169,13 @@ export default function DashboardPage() {
           href="/admin/feeds"
           className="text-sm text-gray-400"
         >
-          Gestion des flux
+          Flux
+        </a>
+        <a
+          href="/admin/settings"
+          className="text-sm text-gray-400"
+        >
+          Paramètres
         </a>
       </div>
 

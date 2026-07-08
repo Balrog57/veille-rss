@@ -2,14 +2,17 @@ const express = require('express');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
+const cron = require('node-cron');
 const config = require('./config');
+const settings = require('./services/settings');
 const { getDb } = require('./db');
 const { requireAuth } = require('./auth');
 const { seedDefaultFeed } = require('./services/seed');
 const { waitForModel } = require('./services/ollama');
-const { startCron } = require('./pipeline/cron');
+const { startCron, stopCron } = require('./pipeline/cron');
 const { runTick } = require('./pipeline/run');
 const { floorTo6hBucket } = require('./services/bucket');
+const { pruneOldEditions } = require('./pipeline/prune');
 
 const app = express();
 
@@ -28,6 +31,45 @@ app.use('/api/feeds', require('./routes/feeds'));
 app.use('/api/editions', require('./routes/editions'));
 app.use('/api/articles', require('./routes/articles'));
 
+// GET /api/admin/settings — read current settings
+app.get('/api/admin/settings', requireAuth, (req, res) => {
+  res.json(settings.get());
+});
+
+// PUT /api/admin/settings — update settings (timezone, cron, retention, maxAge)
+// Also restarts the cron if cronExpr or timezone changed.
+app.put('/api/admin/settings', requireAuth, (req, res) => {
+  const allowed = ['timezone', 'cronExpr', 'retentionDays', 'maxArticleAgeHours'];
+  const updates = {};
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) updates[key] = req.body[key];
+  }
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No valid fields provided' });
+  }
+  // Validate cron expr if provided
+  if (updates.cronExpr && !cron.validate(updates.cronExpr)) {
+    return res.status(400).json({ error: `Invalid cron expression: ${updates.cronExpr}` });
+  }
+  // Validate timezone if provided
+  if (updates.timezone) {
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: updates.timezone }).format(new Date());
+    } catch (e) {
+      return res.status(400).json({ error: `Invalid timezone: ${updates.timezone}` });
+    }
+  }
+  const before = settings.get();
+  const after = settings.save(updates);
+  // Restart cron if schedule or timezone changed
+  if (after.cronExpr !== before.cronExpr || after.timezone !== before.timezone) {
+    stopCron();
+    startCron();
+  }
+  console.log(`[Settings] Updated: ${JSON.stringify(updates)}`);
+  res.json(after);
+});
+
 // POST /api/admin/run-tick — manual tick trigger (auth required)
 // Idempotent: skips if an edition already exists for the current 6h bucket.
 app.post('/api/admin/run-tick', requireAuth, async (req, res) => {
@@ -45,7 +87,8 @@ app.post('/api/admin/run-tick', requireAuth, async (req, res) => {
 app.post('/api/admin/force-tick', requireAuth, async (req, res) => {
   try {
     const db = getDb();
-    const bucket = floorTo6hBucket(new Date());
+    const tz = settings.get().timezone;
+    const bucket = floorTo6hBucket(new Date(), tz);
     const existing = db.prepare('SELECT id FROM editions WHERE bucket = ?').get(bucket);
     if (existing) {
       db.prepare('DELETE FROM articles WHERE edition_id = ?').run(existing.id);
@@ -60,7 +103,65 @@ app.post('/api/admin/force-tick', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/admin/prune — manual cleanup with optional { days } override.
+// If days omitted, uses the current retentionDays setting.
+app.post('/api/admin/prune', requireAuth, (req, res) => {
+  const days = parseInt(req.body && req.body.days, 10) || settings.get().retentionDays;
+  if (days < 1 || days > 3650) {
+    return res.status(400).json({ error: 'days must be between 1 and 3650' });
+  }
+  const before = countEditions();
+  const result = pruneOldEditions(days);
+  const after = countEditions();
+  console.log(`[Prune] Manual prune at ${days} days: ${result.deletedEditions} editions, ${result.deletedArticles} articles deleted`);
+  res.json({ ...result, days, editionsBefore: before, editionsAfter: after });
+});
+
 // --- Startup ---
+function normalizeLegacyBuckets() {
+  // One-shot fix: editions created before the bucket timezone fix have buckets
+  // offset by the TZ offset. Detect them (bucket hour in Paris != 0/6/12/18)
+  // and shift them back. Safe to run on every boot; idempotent.
+  try {
+    const db = getDb();
+    const s = settings.get();
+    const rows = db.prepare('SELECT id, bucket FROM editions').all();
+    let fixed = 0;
+    for (const r of rows) {
+      const d = new Date(r.bucket);
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: s.timezone, hour: '2-digit', hour12: false,
+      }).formatToParts(d);
+      const hh = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+      if (hh % 6 !== 0) {
+        // Shift bucket back by 2h (assumes legacy was UTC hour = Paris hour)
+        // We re-compute by flooring the bucket's Paris hour to nearest 6h boundary,
+        // then converting back to UTC Instant.
+        const provisional = new Date(d.getTime() - 2 * 60 * 60 * 1000);
+        const offsetStr = new Intl.DateTimeFormat('en-US', {
+          timeZone: s.timezone, timeZoneName: 'longOffset',
+        }).formatToParts(provisional).find(p => p.type === 'timeZoneName')?.value || 'GMT+01:00';
+        const m = offsetStr.match(/([+-])(\d{2}):(\d{2})/);
+        const offsetMin = m
+          ? (m[1] === '-' ? -1 : 1) * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10))
+          : 60;
+        const corrected = new Date(provisional.getTime() - offsetMin * 60 * 1000);
+        // Only update if the corrected hour is a clean 6h multiple
+        const correctedParis = new Intl.DateTimeFormat('en-GB', {
+          timeZone: s.timezone, hour: '2-digit', hour12: false,
+        }).format(corrected);
+        if (parseInt(correctedParis, 10) % 6 === 0) {
+          db.prepare('UPDATE editions SET bucket = ? WHERE id = ?').run(corrected.toISOString(), r.id);
+          fixed++;
+        }
+      }
+    }
+    if (fixed > 0) console.log(`[Startup] Normalized ${fixed} legacy edition bucket(s) to ${s.timezone}`);
+  } catch (err) {
+    console.error('[Startup] normalizeLegacyBuckets error:', err.message);
+  }
+}
+
 async function startup() {
   console.log('=== Veille RSS Backend ===');
 
@@ -70,6 +171,9 @@ async function startup() {
 
   // Seed default feed on first boot
   seedDefaultFeed();
+
+  // Normalize any legacy edition buckets from earlier timezone-broken code
+  normalizeLegacyBuckets();
 
   // Wait for Ollama model to be available
   const modelReady = await waitForModel(300000); // 5 min timeout
@@ -82,10 +186,20 @@ async function startup() {
     console.log(`Backend listening on port ${config.port}`);
   });
 
-  // Start cron (only after model check, but doesn't depend on model)
+  // Start cron
   startCron();
-  console.log('Cron started. Pipeline will run at 00:00, 06:00, 12:00, 18:00 Paris time.');
-  console.log(`Manual trigger: POST /api/admin/run-tick (auth required)`);
+  const s = settings.get();
+  console.log(`Cron started. Schedule: "${s.cronExpr}" in ${s.timezone}, retention: ${s.retentionDays} days, max article age: ${s.maxArticleAgeHours}h.`);
+  console.log('Manual triggers:');
+  console.log('  POST /api/admin/run-tick     (idempotent, skip if current bucket exists)');
+  console.log('  POST /api/admin/force-tick   (delete current bucket edition, re-run)');
+  console.log('  POST /api/admin/prune         (manual cleanup, optional { days } body)');
+  console.log('  GET/PUT /api/admin/settings   (read/update settings)');
+}
+
+function countEditions() {
+  try { return getDb().prepare('SELECT COUNT(*) AS n FROM editions').get().n; }
+  catch { return 0; }
 }
 
 startup().catch((err) => {

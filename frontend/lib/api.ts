@@ -93,3 +93,28 @@ export function triggerRunTick() {
     method: 'POST',
   });
 }
+
+export interface Settings {
+  timezone: string;
+  cronExpr: string;
+  retentionDays: number;
+  maxArticleAgeHours: number;
+}
+
+export function getSettings() {
+  return request<Settings>('/admin/settings');
+}
+
+export function updateSettings(updates: Partial<Settings>) {
+  return request<Settings>('/admin/settings', {
+    method: 'PUT',
+    body: JSON.stringify(updates),
+  });
+}
+
+export function pruneNow(days?: number) {
+  return request<{ deletedEditions: number; deletedArticles: number; days: number; editionsBefore: number; editionsAfter: number }>('/admin/prune', {
+    method: 'POST',
+    body: JSON.stringify(days ? { days } : {}),
+  });
+}
