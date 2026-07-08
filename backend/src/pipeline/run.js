@@ -47,6 +47,7 @@ async function runTick() {
     // Step 2: Filter out articles with future pub_date (>2h in the future to
     // tolerate timezone differences / rss.app quirks where it sets pubDate
     // ahead of the current time).
+    console.log('[Run] Step 2: Filter future pubDate');
     const futureToleranceMs = 2 * 60 * 60 * 1000;
     const nowMs = Date.now();
     const nonFutureArticles = rawArticles.filter((a) => {
