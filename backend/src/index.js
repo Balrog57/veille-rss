@@ -120,8 +120,9 @@ app.post('/api/admin/prune', requireAuth, (req, res) => {
 // --- Startup ---
 function normalizeLegacyBuckets() {
   // One-shot fix: editions created before the bucket timezone fix have buckets
-  // offset by the TZ offset. Detect them (bucket hour in Paris != 0/6/12/18)
-  // and shift them back. Safe to run on every boot; idempotent.
+  // that are off by the TZ offset. Detect them (bucket UTC hour NOT in
+  // {0,6,12,18}) and shift them back into a valid 6h multiple.
+  // Safe to run on every boot; idempotent.
   try {
     const db = getDb();
     const s = settings.get();
@@ -129,30 +130,24 @@ function normalizeLegacyBuckets() {
     let fixed = 0;
     for (const r of rows) {
       const d = new Date(r.bucket);
-      const parts = new Intl.DateTimeFormat('en-GB', {
-        timeZone: s.timezone, hour: '2-digit', hour12: false,
-      }).formatToParts(d);
-      const hh = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
-      if (hh % 6 !== 0) {
-        // Shift bucket back by 2h (assumes legacy was UTC hour = Paris hour)
-        // We re-compute by flooring the bucket's Paris hour to nearest 6h boundary,
-        // then converting back to UTC Instant.
-        const provisional = new Date(d.getTime() - 2 * 60 * 60 * 1000);
-        const offsetStr = new Intl.DateTimeFormat('en-US', {
-          timeZone: s.timezone, timeZoneName: 'longOffset',
-        }).formatToParts(provisional).find(p => p.type === 'timeZoneName')?.value || 'GMT+01:00';
-        const m = offsetStr.match(/([+-])(\d{2}):(\d{2})/);
-        const offsetMin = m
-          ? (m[1] === '-' ? -1 : 1) * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10))
-          : 60;
-        const corrected = new Date(provisional.getTime() - offsetMin * 60 * 1000);
-        // Only update if the corrected hour is a clean 6h multiple
-        const correctedParis = new Intl.DateTimeFormat('en-GB', {
-          timeZone: s.timezone, hour: '2-digit', hour12: false,
-        }).format(corrected);
-        if (parseInt(correctedParis, 10) % 6 === 0) {
-          db.prepare('UPDATE editions SET bucket = ? WHERE id = ?').run(corrected.toISOString(), r.id);
+      const hourUtc = d.getUTCHours();
+      if (hourUtc % 6 === 0) continue; // already a valid 6h bucket
+      // Get the TZ offset at the bucket's Paris wall-clock
+      const offsetStr = new Intl.DateTimeFormat('en-US', {
+        timeZone: s.timezone, timeZoneName: 'longOffset',
+      }).formatToParts(d).find(p => p.type === 'timeZoneName')?.value || 'GMT+01:00';
+      const m = offsetStr.match(/([+-])(\d{2}):(\d{2})/);
+      const offsetMin = m
+        ? (m[1] === '-' ? -1 : 1) * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10))
+        : 60;
+      // Try shifting the bucket by +offsetMin (forward) and -offsetMin (backward)
+      // and pick whichever lands on a clean 6h multiple in UTC
+      for (const sign of [1, -1]) {
+        const candidate = new Date(d.getTime() + sign * offsetMin * 60 * 1000);
+        if (candidate.getUTCHours() % 6 === 0) {
+          db.prepare('UPDATE editions SET bucket = ? WHERE id = ?').run(candidate.toISOString(), r.id);
           fixed++;
+          break;
         }
       }
     }
