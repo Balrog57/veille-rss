@@ -10,8 +10,7 @@ const SETTINGS_PATH = process.env.SETTINGS_PATH || path.join(__dirname, '..', '.
 const DEFAULTS = {
   timezone: process.env.TZ || 'Europe/Paris',
   cronExpr: process.env.CRON_EXPR || '0 */6 * * *',
-  retentionDays: parseInt(process.env.RETENTION_DAYS, 10) || 90,
-  maxArticleAgeHours: parseInt(process.env.MAX_ARTICLE_AGE_HOURS, 10) || 48,
+  retentionDays: parseInt(process.env.RETENTION_DAYS, 10) || 300,
 };
 
 let current = null;
@@ -35,8 +34,6 @@ function save(updates) {
   // Validate
   if (current.retentionDays < 1) current.retentionDays = 1;
   if (current.retentionDays > 3650) current.retentionDays = 3650;
-  if (current.maxArticleAgeHours < 1) current.maxArticleAgeHours = 1;
-  if (current.maxArticleAgeHours > 720) current.maxArticleAgeHours = 720; // 30 days max
   try {
     fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
     fs.writeFileSync(SETTINGS_PATH, JSON.stringify(current, null, 2));

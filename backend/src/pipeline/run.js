@@ -44,20 +44,22 @@ async function runTick() {
       return { editionId: info.lastInsertRowid, articleCount: 0 };
     }
 
-    // Step 2: Filter by max article age (in hours)
-    const maxAgeHours = s.maxArticleAgeHours;
-    const cutoffMs = Date.now() - maxAgeHours * 60 * 60 * 1000;
-    const freshArticles = rawArticles.filter((a) => {
+    // Step 2: Filter out articles with future pub_date (>2h in the future to
+    // tolerate timezone differences / rss.app quirks where it sets pubDate
+    // ahead of the current time).
+    const futureToleranceMs = 2 * 60 * 60 * 1000;
+    const nowMs = Date.now();
+    const nonFutureArticles = rawArticles.filter((a) => {
       const t = Date.parse(a.pubDate);
       if (Number.isNaN(t)) return true; // keep if unparseable
-      return t >= cutoffMs;
+      return t <= nowMs + futureToleranceMs;
     });
-    const filtered = rawArticles.length - freshArticles.length;
-    if (filtered > 0) {
-      console.log(`[Run] Filtered ${filtered} articles older than ${maxAgeHours}h`);
+    const futureFiltered = rawArticles.length - nonFutureArticles.length;
+    if (futureFiltered > 0) {
+      console.log(`[Run] Filtered ${futureFiltered} articles with future pubDate (>2h in future)`);
     }
-    if (freshArticles.length === 0) {
-      console.log('[Run] No fresh articles, creating empty edition.');
+    if (nonFutureArticles.length === 0) {
+      console.log('[Run] No valid articles, creating empty edition.');
       const info = db.prepare('INSERT INTO editions (bucket, title) VALUES (?, ?)').run(
         bucket,
         formatEditionTitle(bucket, s.timezone)
@@ -67,7 +69,7 @@ async function runTick() {
 
     // Step 3: Dedup
     console.log('[Run] Step 3: Dedup');
-    const deduped = await dedupArticles(freshArticles);
+    const deduped = await dedupArticles(nonFutureArticles);
     if (deduped.length === 0) {
       console.log('[Run] No articles after dedup, creating empty edition.');
       const info = db.prepare('INSERT INTO editions (bucket, title) VALUES (?, ?)').run(

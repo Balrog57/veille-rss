@@ -4,6 +4,8 @@ data/
 .env
 dist/
 *.log
+*.tsbuildinfo
+zimaos-icons/
 
 # Agent system scratch (not part of the project)
 .opencode/

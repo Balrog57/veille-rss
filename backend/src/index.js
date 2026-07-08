@@ -39,7 +39,7 @@ app.get('/api/admin/settings', requireAuth, (req, res) => {
 // PUT /api/admin/settings — update settings (timezone, cron, retention, maxAge)
 // Also restarts the cron if cronExpr or timezone changed.
 app.put('/api/admin/settings', requireAuth, (req, res) => {
-  const allowed = ['timezone', 'cronExpr', 'retentionDays', 'maxArticleAgeHours'];
+  const allowed = ['timezone', 'cronExpr', 'retentionDays'];
   const updates = {};
   for (const key of allowed) {
     if (req.body[key] !== undefined) updates[key] = req.body[key];
@@ -184,7 +184,7 @@ async function startup() {
   // Start cron
   startCron();
   const s = settings.get();
-  console.log(`Cron started. Schedule: "${s.cronExpr}" in ${s.timezone}, retention: ${s.retentionDays} days, max article age: ${s.maxArticleAgeHours}h.`);
+  console.log(`Cron started. Schedule: "${s.cronExpr}" in ${s.timezone}, retention: ${s.retentionDays} days.`);
   console.log('Manual triggers:');
   console.log('  POST /api/admin/run-tick     (idempotent, skip if current bucket exists)');
   console.log('  POST /api/admin/force-tick   (delete current bucket edition, re-run)');

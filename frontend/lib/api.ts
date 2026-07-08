@@ -98,7 +98,6 @@ export interface Settings {
   timezone: string;
   cronExpr: string;
   retentionDays: number;
-  maxArticleAgeHours: number;
 }
 
 export function getSettings() {
