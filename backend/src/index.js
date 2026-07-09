@@ -84,6 +84,8 @@ app.post('/api/admin/run-tick', requireAuth, async (req, res) => {
 
 // POST /api/admin/force-tick — force a fresh tick for the current 6h bucket.
 // Deletes the existing edition for the current bucket (if any) and re-runs.
+// Always forces: never returns "skipped". If the pipeline is already running,
+// returns 409 so the frontend can inform the user.
 app.post('/api/admin/force-tick', requireAuth, async (req, res) => {
   try {
     const db = getDb();
@@ -96,6 +98,8 @@ app.post('/api/admin/force-tick', requireAuth, async (req, res) => {
       console.log(`[ForceTick] Deleted existing edition ${existing.id} for bucket ${bucket}`);
     }
     const result = await runTick();
+    // force-tick should never be skipped (we deleted the edition above), but
+    // if it is (race), still return success with the existing edition info.
     res.json(result);
   } catch (err) {
     console.error('[ForceTick] Pipeline error:', err.message);
@@ -145,8 +149,12 @@ function normalizeLegacyBuckets() {
       for (const sign of [1, -1]) {
         const candidate = new Date(d.getTime() + sign * offsetMin * 60 * 1000);
         if (candidate.getUTCHours() % 6 === 0) {
-          db.prepare('UPDATE editions SET bucket = ? WHERE id = ?').run(candidate.toISOString(), r.id);
-          fixed++;
+          try {
+            db.prepare('UPDATE editions SET bucket = ? WHERE id = ?').run(candidate.toISOString(), r.id);
+            fixed++;
+          } catch (e) {
+            // UNIQUE constraint: a valid bucket edition already exists, skip silently
+          }
           break;
         }
       }

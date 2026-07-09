@@ -47,37 +47,32 @@ async function runTick() {
     // Step 2: Filter articles to align with the edition's time window.
     // Everything is stored in UTC. The bucket is the UTC instant of the
     // cron tick in the configured timezone. We keep only articles whose
-    // pub_date is reasonably close to the bucket:
-    //   - Not older than (bucket - maxBucketAgeHours): too-old articles are
-    //     either in earlier editions or should be dropped on first run.
-    //   - Not more than 2h in the future: tolerates timezone quirks in
-    //     feeds (e.g. rss.app sets pubDate slightly ahead).
-    // The configured timezone is for display only — the bucket is a single
-    // UTC instant (e.g. 12:00 Paris in summer = 10:00Z), so two users in
-    // Paris and Berlin will see the same edition at the same wall-clock time.
-    console.log('[Run] Step 2: Filter by bucket window');
-    const nowMs = Date.now();
+    // pub_date falls within the 6h window ENDING at the bucket:
+    //   - pub_date >= bucket - 6h  (not too old — belongs to an earlier edition)
+    //   - pub_date <= bucket       (strict — an article published after the
+    //                              bucket goes to the NEXT edition)
+    // This guarantees an article published at 13:00 Paris (11:00Z) goes to
+    // the 18h edition (bucket 16:00Z), NOT the 12h edition (bucket 10:00Z).
+    // The configured timezone is for display only.
+    console.log('[Run] Step 2: Filter by bucket window [bucket-6h, bucket]');
     const bucketMs = new Date(bucket).getTime();
-    const maxBucketAgeHours = 6;
-    const maxBucketAgeMs = maxBucketAgeHours * 60 * 60 * 1000;
-    const futureToleranceMs = 2 * 60 * 60 * 1000;
+    const maxBucketAgeMs = 6 * 60 * 60 * 1000;
     const windowedArticles = rawArticles.filter((a) => {
       const t = Date.parse(a.pubDate);
       if (Number.isNaN(t)) return true; // keep if unparseable
-      // Article must be within [bucket - maxBucketAgeHours, bucket + 2h]
-      return t >= bucketMs - maxBucketAgeMs && t <= bucketMs + futureToleranceMs;
+      return t >= bucketMs - maxBucketAgeMs && t <= bucketMs;
     });
     const outOfWindow = rawArticles.length - windowedArticles.length;
-    const outOfWindowFuture = rawArticles.filter((a) => {
-      const t = Date.parse(a.pubDate);
-      return !Number.isNaN(t) && t > bucketMs + futureToleranceMs;
-    }).length;
-    const outOfWindowPast = rawArticles.filter((a) => {
-      const t = Date.parse(a.pubDate);
-      return !Number.isNaN(t) && t < bucketMs - maxBucketAgeMs;
-    }).length;
     if (outOfWindow > 0) {
-      console.log(`[Run] Filtered ${outOfWindow} articles out of window (${outOfWindowPast} too old, ${outOfWindowFuture} too future)`);
+      const tooOld = rawArticles.filter((a) => {
+        const t = Date.parse(a.pubDate);
+        return !Number.isNaN(t) && t < bucketMs - maxBucketAgeMs;
+      }).length;
+      const afterBucket = rawArticles.filter((a) => {
+        const t = Date.parse(a.pubDate);
+        return !Number.isNaN(t) && t > bucketMs;
+      }).length;
+      console.log(`[Run] Filtered ${outOfWindow} articles out of window (${tooOld} too old, ${afterBucket} after bucket)`);
     }
     if (windowedArticles.length === 0) {
       console.log('[Run] No articles in window, creating empty edition.');

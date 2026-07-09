@@ -18,6 +18,21 @@ export default function DashboardPage() {
   const [ticking, setTicking] = useState(false);
   const [tickResult, setTickResult] = useState<string | null>(null);
 
+  // Load editions list (used by polling and manual refresh)
+  const refreshEditions = useCallback(async (autoSelectLatest = false) => {
+    try {
+      const eds = await getEditions();
+      setEditions(eds);
+      if (autoSelectLatest && eds.length > 0) {
+        setSelectedEditionId(eds[0].id);
+      }
+      return eds;
+    } catch (err) {
+      console.error('Failed to load editions:', err);
+      return [];
+    }
+  }, []);
+
   // Check auth on mount
   useEffect(() => {
     checkAuth()
@@ -25,21 +40,21 @@ export default function DashboardPage() {
       .catch(() => router.push('/login'));
   }, [router]);
 
-  // Load editions
+  // Load editions on mount
   useEffect(() => {
     if (!authChecked) return;
-
     setLoadingEditions(true);
-    getEditions()
-      .then((eds) => {
-        setEditions(eds);
-        if (eds.length > 0) {
-          setSelectedEditionId(eds[0].id);
-        }
-      })
-      .catch(console.error)
-      .finally(() => setLoadingEditions(false));
-  }, [authChecked]);
+    refreshEditions(true).finally(() => setLoadingEditions(false));
+  }, [authChecked, refreshEditions]);
+
+  // Polling: refresh editions every 60s to detect new cron-created editions
+  useEffect(() => {
+    if (!authChecked) return;
+    const interval = setInterval(() => {
+      refreshEditions(false);
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [authChecked, refreshEditions]);
 
   // Load articles for selected edition
   useEffect(() => {
@@ -63,22 +78,27 @@ export default function DashboardPage() {
     try {
       const result = await triggerRunTick();
       if (result.skipped) {
-        setTickResult('⏭️ Collecte déjà effectuée pour ce créneau.');
+        // force-tick should not skip, but handle gracefully
+        setTickResult(`ℹ️ Édition déjà à jour.`);
       } else {
         setTickResult(`✅ ${result.articleCount ?? 0} articles collectés.`);
-        // Refresh editions and select the latest
-        const eds = await getEditions();
-        setEditions(eds);
-        if (eds.length > 0) {
-          setSelectedEditionId(eds[0].id);
-        }
+      }
+      // Always refresh editions and select the latest
+      const eds = await refreshEditions(true);
+      // If no new edition was created (already existed), keep selection
+      if (eds.length > 0 && result.skipped) {
+        setSelectedEditionId(eds[0].id);
       }
     } catch (err: any) {
       setTickResult(`❌ Erreur : ${err.message}`);
     } finally {
       setTicking(false);
     }
-  }, []);
+  }, [refreshEditions]);
+
+  const handleRefresh = useCallback(async () => {
+    await refreshEditions(false);
+  }, [refreshEditions]);
 
   if (!authChecked) {
     return (
@@ -119,10 +139,17 @@ export default function DashboardPage() {
               loading={loadingEditions}
             />
             <button
+              onClick={handleRefresh}
+              className="px-2 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-gray-300 transition-colors"
+              title="Rafraîchir la liste des éditions"
+            >
+              ⟳
+            </button>
+            <button
               onClick={handleRunTick}
               disabled={ticking}
               className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 border border-zinc-700 rounded-lg text-gray-300 transition-colors"
-              title="Déclencher une collecte manuelle"
+              title="Déclencher une collecte manuelle (force le créneau courant)"
             >
               {ticking ? '⏳...' : 'Collecter'}
             </button>

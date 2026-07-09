@@ -89,7 +89,7 @@ export function updateArticlePosition(id: number, position: number) {
 
 // Admin
 export function triggerRunTick() {
-  return request<{ editionId?: number; articleCount?: number; skipped?: boolean }>('/admin/force-tick', {
+  return request<{ editionId?: number; articleCount?: number; skipped?: boolean; reason?: string }>('/admin/force-tick', {
     method: 'POST',
   });
 }
