@@ -7,6 +7,7 @@ const { summarizeAll } = require('./summarize');
 
 // In-process lock to prevent concurrent runs
 let running = false;
+function isRunning() { return running; }
 
 /**
  * Execute one pipeline tick: ingest -> dedup -> summarize -> persist.
@@ -156,4 +157,4 @@ function formatEditionTitle(bucket, tz) {
   })}`;
 }
 
-module.exports = { runTick };
+module.exports = { runTick, isRunning };

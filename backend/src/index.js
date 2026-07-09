@@ -10,7 +10,7 @@ const { requireAuth } = require('./auth');
 const { seedDefaultFeed } = require('./services/seed');
 const { waitForModel } = require('./services/ollama');
 const { startCron, stopCron } = require('./pipeline/cron');
-const { runTick } = require('./pipeline/run');
+const { runTick, isRunning } = require('./pipeline/run');
 const { floorTo6hBucket } = require('./services/bucket');
 const { pruneOldEditions } = require('./pipeline/prune');
 
@@ -87,6 +87,9 @@ app.post('/api/admin/run-tick', requireAuth, async (req, res) => {
 // Always forces: never returns "skipped". If the pipeline is already running,
 // returns 409 so the frontend can inform the user.
 app.post('/api/admin/force-tick', requireAuth, async (req, res) => {
+  if (isRunning()) {
+    return res.status(409).json({ error: 'Pipeline déjà en cours. Patientez quelques minutes.' });
+  }
   try {
     const db = getDb();
     const tz = settings.get().timezone;
@@ -98,8 +101,6 @@ app.post('/api/admin/force-tick', requireAuth, async (req, res) => {
       console.log(`[ForceTick] Deleted existing edition ${existing.id} for bucket ${bucket}`);
     }
     const result = await runTick();
-    // force-tick should never be skipped (we deleted the edition above), but
-    // if it is (race), still return success with the existing edition info.
     res.json(result);
   } catch (err) {
     console.error('[ForceTick] Pipeline error:', err.message);

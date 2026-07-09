@@ -30,6 +30,7 @@ Description: ${description}`;
 /**
  * Summarize all articles with limited concurrency.
  * Returns articles with summary and summary_fallback fields added.
+ * Has a global timeout so the pipeline never blocks forever if Ollama dies.
  */
 async function summarizeAll(articles) {
   if (articles.length === 0) return [];
@@ -40,15 +41,31 @@ async function summarizeAll(articles) {
     limit(() => summarizeArticle(article))
   );
 
-  const results = await Promise.all(tasks);
+  // Global timeout: if summarization takes more than 5 minutes, abort and
+  // use fallbacks. This prevents the pipeline from blocking forever if
+  // Ollama becomes unresponsive.
+  const GLOBAL_TIMEOUT_MS = 5 * 60 * 1000;
+  let results;
+  try {
+    results = await Promise.race([
+      Promise.all(tasks),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Global summarization timeout (5 min)')), GLOBAL_TIMEOUT_MS)
+      ),
+    ]);
+  } catch (err) {
+    console.error('[Summarize] Global timeout or error, using fallbacks:', err.message);
+    // Use fallbacks for all articles
+    results = articles.map(() => ({ summary: null, fallback: true }));
+  }
 
   const output = articles.map((article, i) => ({
     ...article,
-    summary: results[i].summary,
-    summary_fallback: results[i].fallback ? 1 : 0,
+    summary: results[i] ? results[i].summary : (article.description || '').slice(0, 1000),
+    summary_fallback: results[i] && results[i].fallback ? 1 : 0,
   }));
 
-  const fallbackCount = results.filter((r) => r.fallback).length;
+  const fallbackCount = output.filter((a) => a.summary_fallback).length;
   if (fallbackCount > 0) {
     console.log(`[Summarize] ${fallbackCount}/${articles.length} used fallback (Ollama unavailable)`);
   }
