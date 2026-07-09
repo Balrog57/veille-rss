@@ -122,48 +122,10 @@ app.post('/api/admin/prune', requireAuth, (req, res) => {
 });
 
 // --- Startup ---
-function normalizeLegacyBuckets() {
-  // One-shot fix: editions created before the bucket timezone fix have buckets
-  // that are off by the TZ offset. Detect them (bucket UTC hour NOT in
-  // {0,6,12,18}) and shift them back into a valid 6h multiple.
-  // Safe to run on every boot; idempotent.
-  try {
-    const db = getDb();
-    const s = settings.get();
-    const rows = db.prepare('SELECT id, bucket FROM editions').all();
-    let fixed = 0;
-    for (const r of rows) {
-      const d = new Date(r.bucket);
-      const hourUtc = d.getUTCHours();
-      if (hourUtc % 6 === 0) continue; // already a valid 6h bucket
-      // Get the TZ offset at the bucket's Paris wall-clock
-      const offsetStr = new Intl.DateTimeFormat('en-US', {
-        timeZone: s.timezone, timeZoneName: 'longOffset',
-      }).formatToParts(d).find(p => p.type === 'timeZoneName')?.value || 'GMT+01:00';
-      const m = offsetStr.match(/([+-])(\d{2}):(\d{2})/);
-      const offsetMin = m
-        ? (m[1] === '-' ? -1 : 1) * (parseInt(m[2], 10) * 60 + parseInt(m[3], 10))
-        : 60;
-      // Try shifting the bucket by +offsetMin (forward) and -offsetMin (backward)
-      // and pick whichever lands on a clean 6h multiple in UTC
-      for (const sign of [1, -1]) {
-        const candidate = new Date(d.getTime() + sign * offsetMin * 60 * 1000);
-        if (candidate.getUTCHours() % 6 === 0) {
-          try {
-            db.prepare('UPDATE editions SET bucket = ? WHERE id = ?').run(candidate.toISOString(), r.id);
-            fixed++;
-          } catch (e) {
-            // UNIQUE constraint: a valid bucket edition already exists, skip silently
-          }
-          break;
-        }
-      }
-    }
-    if (fixed > 0) console.log(`[Startup] Normalized ${fixed} legacy edition bucket(s) to ${s.timezone}`);
-  } catch (err) {
-    console.error('[Startup] normalizeLegacyBuckets error:', err.message);
-  }
-}
+// NOTE: normalizeLegacyBuckets() was removed — it incorrectly treated valid
+// Europe/Paris buckets (UTC 22/04/10/16) as legacy and corrupted them by
+// shifting to UTC 00/06/12/18. All buckets created by floorTo6hBucket() are
+// correct; legacy editions have already been handled manually.
 
 async function startup() {
   console.log('=== Veille RSS Backend ===');
@@ -174,9 +136,6 @@ async function startup() {
 
   // Seed default feed on first boot
   seedDefaultFeed();
-
-  // Normalize any legacy edition buckets from earlier timezone-broken code
-  normalizeLegacyBuckets();
 
   // Wait for Ollama model to be available
   const modelReady = await waitForModel(300000); // 5 min timeout
