@@ -96,19 +96,6 @@ export default function DashboardPage() {
     }
   }, [refreshEditions]);
 
-  const handleRefresh = useCallback(async () => {
-    await refreshEditions(false);
-    // Also reload articles for the currently selected edition
-    if (selectedEditionId) {
-      try {
-        const ed = await getEdition(selectedEditionId);
-        setArticles(ed.articles || []);
-      } catch (err) {
-        console.error('Failed to reload edition:', err);
-      }
-    }
-  }, [refreshEditions, selectedEditionId]);
-
   if (!authChecked) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -147,13 +134,6 @@ export default function DashboardPage() {
               onSelect={setSelectedEditionId}
               loading={loadingEditions}
             />
-            <button
-              onClick={handleRefresh}
-              className="px-2 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-gray-300 transition-colors"
-              title="Rafraîchir la liste des éditions"
-            >
-              ⟳
-            </button>
             <button
               onClick={handleRunTick}
               disabled={ticking}
