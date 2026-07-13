@@ -1,32 +1,35 @@
 # Veille RSS — IA News Monitor
 
-Multi-source RSS news monitoring with automatic French summarization via a local Ollama model. Designed for lightweight deployment on a ZimaOS mini PC or any Docker host.
+Multi-source RSS news monitoring with automatic French summarization via an Ollama model. Designed for lightweight deployment on a ZimaOS mini PC or any Docker host.
+
+Ollama runs as a **separate, shared service** (not bundled with this stack) on the `ai_net` Docker network — see [Prerequisites](#prerequisites).
 
 ## Architecture
 
 ```
-┌──────────┐     ┌──────────────┐     ┌───────────┐
-│ Ollama    │ ◄── │ Backend      │ ◄── │ Frontend  │
-│ (qwen2.5  │     │ Express +    │     │ Next.js   │
-│  :1.5b)   │     │ SQLite +     │     │ Tailwind  │
-│           │     │ node-cron    │     │ @dnd-kit  │
-└──────────┘     └──────┬───────┘     └───────────┘
-                        │
-                   ┌────▼────┐
-                   │ SQLite  │
-                   │ ./data/ │
-                   └─────────┘
+┌──────────────────┐     ┌──────────────┐     ┌───────────┐
+│ Ollama (external)│ ◄── │ Backend      │ ◄── │ Frontend  │
+│ ai-stack-ollama  │     │ Express +    │     │ Next.js   │
+│ (qwen2.5:1.5b)   │     │ SQLite +     │     │ Tailwind  │
+│      ai_net      │     │ node-cron    │     │ @dnd-kit  │
+└──────────────────┘     └──────┬───────┘     └───────────┘
+                               │ (veille_default)
+                          ┌────▼────┐
+                          │ SQLite  │
+                          │ ./data/ │
+                          └─────────┘
 ```
 
-- **Ollama** — local LLM server (qwen2.5:1.5b, ~1 GB RAM)
-- **Backend** — Express API with SQLite, RSS ingestion, dedup pipeline, and cron
-- **Frontend** — Next.js standalone build, browser-direct API calls, dark theme
+- **Ollama** — external LLM server (qwen2.5:1.5b, ~1 GB RAM), shared via the `ai_net` network. Not started by this stack.
+- **Backend** — Express API with SQLite, RSS ingestion, dedup pipeline, and cron. Attached to both `veille_default` and `ai_net`.
+- **Frontend** — Next.js standalone build, browser-direct API calls, dark theme.
 
 ## Prerequisites
 
 - Docker and Docker Compose (v2+)
-- At least 2 GB free RAM (1.5 GB for Ollama + 0.5 GB for the stack)
-- About 2 GB free disk for the Ollama model + dependencies
+- **An Ollama instance reachable on the `ai_net` Docker network.** This stack does not bundle Ollama — it connects to the shared `ai-stack-ollama` container (or any Ollama service you publish on `ai_net`). The model `qwen2.5:1.5b` (~1 GB) must be pulled on that instance.
+- ~512 MB free RAM for the veille stack itself (Ollama RAM is accounted for by its own deployment)
+- ~200 MB free disk for SQLite + dependencies (the Ollama model lives on its own deployment)
 
 ## Quick Start
 
@@ -57,11 +60,11 @@ Edit `.env` and set at minimum:
 docker compose up -d --build
 ```
 
-This will:
-1. Start Ollama (model server)
-2. Pull the model (`qwen2.5:1.5b`)
-3. Start the backend (Express on port 4000)
-4. Start the frontend (Next.js on port 3000)
+This will start:
+1. The backend (Express on port 4000) — connected to both `veille_default` and `ai_net`
+2. The frontend (Next.js on port 3000)
+
+Ollama is **not** started by this stack. It must already be running on the `ai_net` network (see [Prerequisites](#prerequisites)). The backend waits up to 5 minutes for the model to appear in Ollama's `/api/tags`.
 
 ### 4. Access the UI
 
@@ -103,8 +106,11 @@ To trigger an immediate collection:
 ### Change the Ollama model
 
 1. Update `OLLAMA_MODEL` in `.env` (e.g., `qwen2.5:3b`)
-2. Update `backend/scripts/pull-ollama-model.sh` if needed
-3. Rebuild and restart:
+2. Pull the model on the **Ollama instance** (not in this stack):
+   ```bash
+   docker exec ai-stack-ollama ollama pull qwen2.5:3b
+   ```
+3. Rebuild and restart the backend:
    ```bash
    docker compose up -d --build backend
    ```
@@ -114,7 +120,8 @@ To trigger an immediate collection:
 ```bash
 docker compose logs -f backend   # Backend + pipeline logs
 docker compose logs -f frontend  # Frontend logs
-docker compose logs -f ollama    # Ollama logs
+# Ollama logs are on its own deployment, e.g.:
+# docker logs -f ai-stack-ollama
 ```
 
 ### Reset the database
@@ -173,11 +180,17 @@ All endpoints require authentication via the `veille_sess` cookie (except `/api/
 Ensure `.env` exists (not just `.env.example`) and contains the required variables.
 
 ### "Cannot connect to Ollama"
-Check that Ollama is running:
+Ollama runs as a separate service on the `ai_net` network. Check that it is up and that the model is pulled:
 ```bash
-docker compose logs ollama
+docker ps --filter name=ai-stack-ollama                 # is Ollama running?
+docker exec ai-stack-ollama ollama list                 # is the model present?
+docker logs ai-stack-ollama                             # Ollama logs
 ```
-The backend waits up to 5 minutes for the model to appear in `/api/tags`.
+Also verify the `ai_net` network exists and that the veille backend is attached to it:
+```bash
+docker network inspect ai_net --format '{{range .Containers}}{{.Name}} {{end}}'
+```
+The backend waits up to 5 minutes for the model to appear in `/api/tags`. If Ollama was started after the backend, restart it: `docker restart veille-backend`.
 
 ### CORS / frontend shows blank page / API errors
 The frontend calls the backend at `http://<hostname>:4000`. Make sure port 4000 is accessible. CORS is configured to allow the frontend origin (`http://localhost:3000` on desktop).

@@ -1,33 +1,5 @@
+name: veille
 services:
-  ollama:
-    image: ollama/ollama:latest
-    container_name: veille-ollama
-    restart: unless-stopped
-    volumes:
-      - ollama-data:/root/.ollama
-    environment:
-      - OLLAMA_HOST=0.0.0.0
-    healthcheck:
-      test: ["CMD", "/bin/ollama", "list"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-
-  pipeline-init:
-    image: ollama/ollama:latest
-    container_name: veille-pipeline-init
-    restart: "no"
-    depends_on:
-      ollama:
-        condition: service_healthy
-    volumes:
-      - ollama-data:/root/.ollama
-      - ./backend/scripts/pull-ollama-model.sh:/pull-ollama-model.sh
-    environment:
-      - OLLAMA_HOST=ollama:11434
-    entrypoint: ["/bin/sh", "/pull-ollama-model.sh"]
-
   backend:
     build:
       context: ./backend
@@ -41,17 +13,15 @@ services:
     env_file:
       - .env
     environment:
-      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_URL=http://ai-stack-ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
       - TZ=Europe/Paris
       - DATABASE_PATH=/app/data/veille.sqlite
       - APP_PASSWORD=${APP_PASSWORD:?APP_PASSWORD is required}
       - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET is required}
-    depends_on:
-      ollama:
-        condition: service_healthy
-      pipeline-init:
-        condition: service_completed_successfully
+    networks:
+      - default
+      - ai_net
 
   frontend:
     build:
@@ -65,6 +35,8 @@ services:
       - NODE_ENV=production
     depends_on:
       - backend
+    networks:
+      - default
 
 x-casaos:
   author: self
@@ -81,5 +53,9 @@ x-casaos:
     custom: "Veille RSS"
     en_us: "Veille RSS"
 
-volumes:
-  ollama-data:
+networks:
+  default:
+    name: veille_default
+  ai_net:
+    name: ai_net
+    external: true
