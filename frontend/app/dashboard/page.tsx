@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { checkAuth, logout, getEditions, getEdition, triggerRunTick } from '@/lib/api';
+import { checkAuth, logout, getEditions, getEdition, triggerRunTick, resummarizeEdition } from '@/lib/api';
 import type { Edition, Article } from '@/lib/types';
 import EditionSelector from './components/EditionSelector';
 import DraggableGrid from './components/DraggableGrid';
@@ -16,6 +16,7 @@ export default function DashboardPage() {
   const [loadingEditions, setLoadingEditions] = useState(true);
   const [loadingArticles, setLoadingArticles] = useState(false);
   const [ticking, setTicking] = useState(false);
+  const [resummarizing, setResummarizing] = useState(false);
   const [tickResult, setTickResult] = useState<string | null>(null);
 
   // Load editions list (used by polling and manual refresh)
@@ -96,6 +97,34 @@ export default function DashboardPage() {
     }
   }, [refreshEditions]);
 
+  const fallbackCount = articles.filter((a) => a.summary_fallback).length;
+
+  const handleResummarize = useCallback(async () => {
+    if (!selectedEditionId) return;
+    setResummarizing(true);
+    setTickResult(null);
+    try {
+      const result = await resummarizeEdition(selectedEditionId);
+      if (result.skipped) {
+        setTickResult(`ℹ️ Pipeline déjà en cours.`);
+      } else if (!result.attempted) {
+        setTickResult(`ℹ️ Tous les articles ont déjà un résumé.`);
+      } else {
+        setTickResult(
+          `✅ ${result.updated ?? 0} résumé(s) FR généré(s)${
+            result.remainingFallback ? `, ${result.remainingFallback} encore en description.` : '.'
+          }`
+        );
+      }
+      const ed = await getEdition(selectedEditionId);
+      setArticles(ed.articles || []);
+    } catch (err: any) {
+      setTickResult(`❌ Erreur : ${err.message}`);
+    } finally {
+      setResummarizing(false);
+    }
+  }, [selectedEditionId]);
+
   if (!authChecked) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -136,12 +165,22 @@ export default function DashboardPage() {
             />
             <button
               onClick={handleRunTick}
-              disabled={ticking}
+              disabled={ticking || resummarizing}
               className="px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 border border-zinc-700 rounded-lg text-gray-300 transition-colors"
               title="Déclencher une collecte manuelle (force le créneau courant)"
             >
               {ticking ? '⏳...' : 'Collecter'}
             </button>
+            {fallbackCount > 0 && (
+              <button
+                onClick={handleResummarize}
+                disabled={ticking || resummarizing}
+                className="px-3 py-1.5 text-xs bg-amber-900/40 hover:bg-amber-800/50 disabled:opacity-50 border border-amber-700/60 rounded-lg text-amber-200 transition-colors"
+                title="Régénère les résumés IA manquants (badge DESCRIPTION) sans recollecter"
+              >
+                {resummarizing ? '⏳ résumés...' : `Relancer les résumés (${fallbackCount})`}
+              </button>
+            )}
             <button
               onClick={handleLogout}
               className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"

@@ -7,7 +7,6 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --only=production && npm cache clean --force
 
-COPY scripts/pull-ollama-model.sh ./scripts/pull-ollama-model.sh
 COPY src/ ./src/
 
 EXPOSE 4000

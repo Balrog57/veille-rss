@@ -145,6 +145,70 @@ async function runTick() {
   }
 }
 
+/**
+ * Re-run Ollama summaries for articles that fell back to the raw description.
+ * Does not re-ingest or re-dedup. editionId omitted = latest edition.
+ */
+async function resummarizeEdition(editionId) {
+  if (running) {
+    console.log('[Resummarize] Pipeline already running, skipping.');
+    return { skipped: true, reason: 'already_running' };
+  }
+
+  running = true;
+  try {
+    const db = getDb();
+    let id = null;
+    if (editionId != null && editionId !== '') {
+      id = Number(editionId);
+      if (!Number.isInteger(id) || id < 1) {
+        return { skipped: true, reason: 'invalid_edition' };
+      }
+    }
+    if (!id) {
+      const latest = db.prepare('SELECT id FROM editions ORDER BY bucket DESC LIMIT 1').get();
+      if (!latest) return { skipped: true, reason: 'no_edition' };
+      id = latest.id;
+    }
+
+    const rows = db.prepare(
+      'SELECT id, title, description FROM articles WHERE edition_id = ? AND summary_fallback = 1'
+    ).all(id);
+
+    if (rows.length === 0) {
+      console.log(`[Resummarize] Edition ${id}: nothing to do.`);
+      return { editionId: id, attempted: 0, updated: 0, remainingFallback: 0 };
+    }
+
+    console.log(`[Resummarize] Edition ${id}: ${rows.length} fallback articles`);
+    const summarized = await summarizeAll(
+      rows.map((r) => ({ id: r.id, title: r.title, description: r.description || '' }))
+    );
+
+    const update = db.prepare('UPDATE articles SET summary = ?, summary_fallback = ? WHERE id = ?');
+    const persist = db.transaction(() => {
+      let updated = 0;
+      for (const a of summarized) {
+        update.run(a.summary, a.summary_fallback, a.id);
+        if (!a.summary_fallback) updated += 1;
+      }
+      return updated;
+    });
+    const updated = persist();
+    const remaining = db.prepare(
+      'SELECT COUNT(*) AS n FROM articles WHERE edition_id = ? AND summary_fallback = 1'
+    ).get(id).n;
+
+    console.log(`[Resummarize] Done. ${updated} French summaries, ${remaining} still fallback.`);
+    return { editionId: id, attempted: rows.length, updated, remainingFallback: remaining };
+  } catch (err) {
+    console.error('[Resummarize] error:', err);
+    throw err;
+  } finally {
+    running = false;
+  }
+}
+
 function formatEditionTitle(bucket, tz) {
   return `Édition du ${new Date(bucket).toLocaleDateString('fr-FR', {
     weekday: 'long',
@@ -157,4 +221,4 @@ function formatEditionTitle(bucket, tz) {
   })}`;
 }
 
-module.exports = { runTick, isRunning };
+module.exports = { runTick, isRunning, resummarizeEdition };

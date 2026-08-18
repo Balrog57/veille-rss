@@ -10,7 +10,7 @@ const { requireAuth } = require('./auth');
 const { seedDefaultFeed } = require('./services/seed');
 const { waitForModel } = require('./services/ollama');
 const { startCron, stopCron } = require('./pipeline/cron');
-const { runTick, isRunning } = require('./pipeline/run');
+const { runTick, isRunning, resummarizeEdition } = require('./pipeline/run');
 const { floorTo6hBucket } = require('./services/bucket');
 const { pruneOldEditions } = require('./pipeline/prune');
 
@@ -108,6 +108,22 @@ app.post('/api/admin/force-tick', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/admin/resummarize — regenerate French summaries for fallback articles.
+// Body: { editionId? }. Omit editionId to target the latest edition.
+app.post('/api/admin/resummarize', requireAuth, async (req, res) => {
+  if (isRunning()) {
+    return res.status(409).json({ error: 'Pipeline déjà en cours. Patientez quelques minutes.' });
+  }
+  try {
+    const editionId = req.body && req.body.editionId;
+    const result = await resummarizeEdition(editionId);
+    res.json(result);
+  } catch (err) {
+    console.error('[Resummarize] error:', err.message);
+    res.status(500).json({ error: 'Resummarize failed' });
+  }
+});
+
 // POST /api/admin/prune — manual cleanup with optional { days } override.
 // If days omitted, uses the current retentionDays setting.
 app.post('/api/admin/prune', requireAuth, (req, res) => {
@@ -156,6 +172,7 @@ async function startup() {
   console.log('Manual triggers:');
   console.log('  POST /api/admin/run-tick     (idempotent, skip if current bucket exists)');
   console.log('  POST /api/admin/force-tick   (delete current bucket edition, re-run)');
+  console.log('  POST /api/admin/resummarize  (retry French summaries on fallback articles)');
   console.log('  POST /api/admin/prune         (manual cleanup, optional { days } body)');
   console.log('  GET/PUT /api/admin/settings   (read/update settings)');
 }

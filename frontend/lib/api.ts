@@ -94,6 +94,20 @@ export function triggerRunTick() {
   });
 }
 
+export function resummarizeEdition(editionId?: number) {
+  return request<{
+    editionId?: number;
+    attempted?: number;
+    updated?: number;
+    remainingFallback?: number;
+    skipped?: boolean;
+    reason?: string;
+  }>('/admin/resummarize', {
+    method: 'POST',
+    body: JSON.stringify(editionId ? { editionId } : {}),
+  });
+}
+
 export interface Settings {
   timezone: string;
   cronExpr: string;

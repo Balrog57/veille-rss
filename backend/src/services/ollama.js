@@ -31,27 +31,48 @@ async function waitForModel(timeoutMs = 300000) {
 }
 
 /**
+ * Quick liveness check (does not wait for the model).
+ */
+async function isAvailable() {
+  try {
+    const res = await fetch(`${config.ollamaUrl}/api/tags`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Generate a text completion using Ollama.
  * Returns the response text or null on failure.
+ *
+ * `keep_alive: "30m"` keeps the model loaded across a long CPU batch.
+ * `num_predict: 220` is enough for 2-3 sentences and is much faster than 512 on CPU.
  */
-async function generate(prompt, { timeout = 60000 } = {}) {
+async function generate(prompt, { timeout = 120000, system } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
 
   try {
+    const body = {
+      model: config.ollamaModel,
+      prompt,
+      stream: false,
+      keep_alive: '30m',
+      options: {
+        num_predict: 220,
+        temperature: 0.2,
+        num_ctx: 2048,
+      },
+    };
+    if (system) body.system = system;
+
     const res = await fetch(`${config.ollamaUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: config.ollamaModel,
-        prompt: prompt,
-        stream: false,
-        keep_alive: '10m',
-        options: {
-          num_predict: 512,
-          temperature: 0.3,
-        },
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
 
@@ -70,4 +91,4 @@ async function generate(prompt, { timeout = 60000 } = {}) {
   }
 }
 
-module.exports = { waitForModel, generate };
+module.exports = { waitForModel, isAvailable, generate };

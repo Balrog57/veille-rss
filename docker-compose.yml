@@ -1,32 +1,26 @@
 name: veille
 services:
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: 127.0.0.1:5500/veille-rss-backend:latest
     container_name: veille-backend
     restart: unless-stopped
     ports:
       - "4000:4000"
     volumes:
-      - ./data:/app/data
+      - /DATA/AppData/veille/data:/app/data
     env_file:
-      - .env
+      - /DATA/AppData/veille/.env
     environment:
       - OLLAMA_URL=http://ai-stack-ollama:11434
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+      - OLLAMA_MODEL=qwen2.5:1.5b
       - TZ=Europe/Paris
       - DATABASE_PATH=/app/data/veille.sqlite
-      - APP_PASSWORD=${APP_PASSWORD:?APP_PASSWORD is required}
-      - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET is required}
     networks:
       - default
       - ai_net
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: 127.0.0.1:5500/veille-rss-frontend:latest
     container_name: veille-frontend
     restart: unless-stopped
     ports:
@@ -40,7 +34,7 @@ services:
 
 x-casaos:
   author: self
-  category: News
+  category: Utilities
   hostname: 192.168.1.98
   icon: http://192.168.1.98:3000/veille-rss.png
   index: /
