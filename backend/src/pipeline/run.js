@@ -3,7 +3,7 @@ const { floorTo6hBucket } = require('../services/bucket');
 const settings = require('../services/settings');
 const { ingestAllFeeds } = require('./ingest');
 const { dedupArticles } = require('./dedup');
-const { summarizeAll } = require('./summarize');
+const { summarizeAll, looksLikeMetaSummary } = require('./summarize');
 
 // In-process lock to prevent concurrent runs
 let running = false;
@@ -172,8 +172,8 @@ async function resummarizeEdition(editionId) {
     }
 
     const rows = db.prepare(
-      'SELECT id, title, description FROM articles WHERE edition_id = ? AND summary_fallback = 1'
-    ).all(id);
+      'SELECT id, title, description, summary, summary_fallback FROM articles WHERE edition_id = ?'
+    ).all(id).filter((r) => r.summary_fallback === 1 || looksLikeMetaSummary(r.summary));
 
     if (rows.length === 0) {
       console.log(`[Resummarize] Edition ${id}: nothing to do.`);
@@ -196,8 +196,8 @@ async function resummarizeEdition(editionId) {
     });
     const updated = persist();
     const remaining = db.prepare(
-      'SELECT COUNT(*) AS n FROM articles WHERE edition_id = ? AND summary_fallback = 1'
-    ).get(id).n;
+      'SELECT id, summary, summary_fallback FROM articles WHERE edition_id = ?'
+    ).all(id).filter((r) => r.summary_fallback === 1 || looksLikeMetaSummary(r.summary)).length;
 
     console.log(`[Resummarize] Done. ${updated} French summaries, ${remaining} still fallback.`);
     return { editionId: id, attempted: rows.length, updated, remainingFallback: remaining };

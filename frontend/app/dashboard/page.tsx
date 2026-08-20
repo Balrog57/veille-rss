@@ -97,7 +97,21 @@ export default function DashboardPage() {
     }
   }, [refreshEditions]);
 
-  const fallbackCount = articles.filter((a) => a.summary_fallback).length;
+  const looksLikeMetaSummary = (text: string | null | undefined) => {
+    if (!text) return false;
+    const t = text.toLowerCase();
+    return (
+      /ce r[eé]sum[eé] est d[eé]j[aà]/.test(t) ||
+      /n['']est pas n[eé]cessaire de/.test(t) ||
+      /je peux reformuler/.test(t) ||
+      /d[eé]j[aà] (écrit|fourni|en fran[cç]ais)/.test(t) ||
+      /fourni dans l['']article/.test(t)
+    );
+  };
+
+  const fallbackCount = articles.filter(
+    (a) => a.summary_fallback || looksLikeMetaSummary(a.summary)
+  ).length;
 
   const handleResummarize = useCallback(async () => {
     if (!selectedEditionId) return;

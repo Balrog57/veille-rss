@@ -4,12 +4,12 @@ const { canonicalUrlHash } = require('../utils/hash');
 const { stripHtml } = require('../utils/html');
 
 const MAX_ARTICLES_PER_FEED = 200;
+const FEED_TIMEOUT_MS = 30000;
+const FEED_HEADERS = {
+  'User-Agent': 'VeilleRSS/1.0 (+https://github.com/noveltrad/veille-rss)',
+  'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+};
 const parser = new Parser({
-  timeout: 30000,
-  headers: {
-    'User-Agent': 'VeilleRSS/1.0 (+https://github.com/noveltrad/veille-rss)',
-    'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-  },
   customFields: {
     item: [
       ['media:content', 'media:content', { keepArray: true }],
@@ -18,6 +18,16 @@ const parser = new Parser({
     ],
   },
 });
+
+async function fetchFeed(url, fetchImpl = fetch) {
+  const response = await fetchImpl(url, {
+    headers: FEED_HEADERS,
+    redirect: 'error',
+    signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`Status code ${response.status}`);
+  return parser.parseString(await response.text());
+}
 
 /**
  * Extract the best available image URL from an RSS item.
@@ -90,7 +100,7 @@ async function ingestAllFeeds() {
   for (const feed of feeds) {
     console.log(`[Ingest] Fetching feed: ${feed.url}`);
     try {
-      const parsed = await parser.parseURL(feed.url);
+      const parsed = await fetchFeed(feed.url);
       const items = parsed.items || [];
       console.log(`[Ingest]   Got ${items.length} items from "${feed.title || feed.url}"`);
 
@@ -129,4 +139,4 @@ async function ingestAllFeeds() {
   return allArticles;
 }
 
-module.exports = { ingestAllFeeds };
+module.exports = { ingestAllFeeds, fetchFeed };

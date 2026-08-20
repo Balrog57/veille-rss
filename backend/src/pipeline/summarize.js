@@ -6,14 +6,16 @@ const { generate, isAvailable } = require('../services/ollama');
 // main cause of whole editions falling back to DESCRIPTION).
 const CONCURRENCY = 1;
 const ARTICLE_TIMEOUT_MS = 120000;
-const MAX_ATTEMPTS = 2;
+const MAX_ATTEMPTS = 3;
 const MAX_BATCH_MS = 90 * 60 * 1000;
 
-const FRENCH_SYSTEM = `Tu es un rédacteur de veille technologique.
-Tu réponds UNIQUEMENT en français (jamais en anglais).
-Tu écris un résumé de 2 à 3 phrases, ton neutre et factuel.
-Tu ne commences jamais par "L'article parle de", "Cet article", "This article" ou "The article".
-Si la source est en anglais, tu traduis le fond en français.`;
+const FRENCH_SYSTEM = `Tu es un journaliste tech. Tu écris une brève factuelle en français.
+Règles strictes:
+- 2 ou 3 phrases, faits seulement (qui, quoi, chiffres)
+- commence DIRECTEMENT par un fait, jamais par un commentaire
+- interdit: parler de traduction, de résumé, de l'article, de ta tâche
+- interdit: "Ce résumé est déjà", "Voici", "Bien sûr", "Je peux reformuler", "pas nécessaire de traduire"
+- si le texte source est déjà en français, résume-le quand même (ne dis pas qu'il est déjà en français)`;
 
 const FR_MARKERS = /\b(le|la|les|un|une|des|du|de|et|est|dans|pour|que|qui|avec|sur|par|plus|pas|au|aux|ce|cette|ces|son|sa|ses|ont|été|être|sont|mais|comme|après|avant|selon|dont|aussi|très|entre|contre|sans|sous|vers|chez|où|lors|ainsi|grâce|déjà|encore|depuis|une|ont|aux|cette)\b/gi;
 const EN_MARKERS = /\b(the|is|are|was|were|this|that|with|from|have|has|been|will|would|their|they|which|about|into|also|after|before|during|while|these|those|its|not|can|could|should|may|might)\b/gi;
@@ -25,27 +27,59 @@ function looksEnglish(text) {
   return en >= 4 && en > fr * 1.5;
 }
 
+function looksLikeMetaSummary(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return (
+    /ce r[eé]sum[eé] est d[eé]j[aà]/.test(t) ||
+    /n['']est pas n[eé]cessaire de/.test(t) ||
+    /pas (besoin|n[eé]cessaire) de traduire/.test(t) ||
+    /je peux reformuler/.test(t) ||
+    /je (peux|vais|dois) (le )?(traduire|r[eé]sumer|reformuler)/.test(t) ||
+    /voici (le |un )?(r[eé]sum[eé]|la br[eè]ve)/.test(t) ||
+    /en tant qu[''](assistant|ia|r[eé]dacteur)/.test(t) ||
+    /d[eé]j[aà] (écrit|fourni|en fran[cç]ais)/.test(t) ||
+    /fourni dans l['']article/.test(t)
+  );
+}
+
+function extractNewsBody(text) {
+  let t = (text || '').trim().replace(/^["«]+|["»]+$/g, '').trim();
+  const colon = t.search(/:\s+/);
+  if (colon > 0 && colon < 220) {
+    const head = t.slice(0, colon);
+    const rest = t.slice(colon + 1).trim();
+    if (looksLikeMetaSummary(head) && rest.length >= 40 && !looksLikeMetaSummary(rest)) {
+      return rest;
+    }
+  }
+  return t;
+}
+
+function isUsableSummary(text) {
+  const cleaned = extractNewsBody(text);
+  if (!cleaned || cleaned.length < 40) return null;
+  if (looksEnglish(cleaned) || looksLikeMetaSummary(cleaned)) return null;
+  return cleaned;
+}
+
 function buildPrompt(title, description) {
-  return `Résume OBLIGATOIREMENT EN FRANÇAIS (pas d'anglais) cet article en 2-3 phrases. Traduis si la source est anglaise.
+  return `Écris une brève d'actualité en français (2-3 phrases). Pas de préface. Pas de commentaire sur la langue.
 
 Titre: ${title}
-Description: ${description}
-
-Résumé en français :`;
+Contenu: ${description}`;
 }
 
 function buildRetryPrompt(title, description) {
-  return `La réponse précédente n'était pas un résumé français acceptable. Réécris UNIQUEMENT EN FRANÇAIS, 2-3 phrases factuelles. Aucun mot anglais.
+  return `N'écris PAS "ce résumé est déjà..." ni "je peux reformuler". Seulement 2-3 phrases de faits en français, dès le premier mot.
 
 Titre: ${title}
-Description: ${description}
-
-Résumé en français :`;
+Contenu: ${description}`;
 }
 
 /**
  * Generate a French summary for a single article using Ollama.
- * Retries once if empty, too short, or likely English.
+ * Retries if empty, too short, English, or meta-commentary ("ce résumé est déjà...").
  */
 async function summarizeArticle(article) {
   const title = article.title || '';
@@ -57,13 +91,20 @@ async function summarizeArticle(article) {
       timeout: ARTICLE_TIMEOUT_MS,
       system: FRENCH_SYSTEM,
     });
-    const cleaned = (result || '').trim();
+    const usable = isUsableSummary(result);
 
-    if (cleaned && cleaned.length >= 40 && !looksEnglish(cleaned)) {
-      return { summary: cleaned, fallback: false };
+    if (usable) {
+      return { summary: usable, fallback: false };
     }
 
-    const reason = !cleaned ? 'empty' : looksEnglish(cleaned) ? 'english' : 'too short';
+    const cleaned = (result || '').trim();
+    const reason = !cleaned
+      ? 'empty'
+      : looksLikeMetaSummary(cleaned)
+        ? 'meta-commentary'
+        : looksEnglish(cleaned)
+          ? 'english'
+          : 'too short';
     console.warn(`[Summarize] Attempt ${attempt + 1}/${MAX_ATTEMPTS} rejected for "${title.slice(0, 60)}": ${reason}`);
   }
 
@@ -148,4 +189,4 @@ async function summarizeAll(articles) {
   return output;
 }
 
-module.exports = { summarizeAll };
+module.exports = { summarizeAll, looksLikeMetaSummary };
